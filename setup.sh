@@ -10,6 +10,61 @@ PG_PORT_INT="${PG_PORT_INT:-"5432"}"
 PG_PORT_EXT="${PG_PORT_EXT:-"5432"}"
 PG_DAEMON_GID="${PG_DAEMON_GID:-70}"
 PG_DAEMON_UID="${PG_DAEMON_UID:-70}"
+PG_CLIENT_APP="${PG_CLIENT_APP:-"psql"}"
+PG_CLIENT_PKG="${PG_CLIENT_PKG:-"libpq"}"
+
+function validate_tool() {
+  local \
+    tool \
+    rc
+  tool="${1?missing mandatory parameter tool}"
+  command -v "${tool}" > /dev/null 2>/dev/null && rc=$? || rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    echo "tool ${tool} is not installed"
+  fi
+  return "${rc}"
+}
+
+function validate_tools() {
+  local -a \
+    tools
+  local \
+    tool \
+    rc
+  tools+=("${@}")
+  if [[ "${#tools[@]}" -eq 0 ]]; then
+    return 0
+  fi  
+  for tool in "${tools[@]}"; do
+    validate_tool "${tool}" > /dev/null 2>/dev/null && rc=$? || rc=$?
+    if [[ "${rc}" -ne 0 ]]; then
+      return "${rc}"
+    fi
+  done
+  return "${rc}"
+}
+
+function install_brew() {
+  local -a \
+    pkgs
+  pkgs=("${@}")
+  brew install "${pkgs[@]}"
+}
+
+function install_debian() {
+  local -a \
+    pkgs
+  local \
+    rc
+  pkgs=("${@}")
+  command -v apt > /dev/null 2>/dev/null && rc=$? || rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    echo "Unsupported Linux system"
+    return "${rc}"
+  fi
+  apt install -y "${pkgs[@]}" && rc=$? || rc=$?
+  return "${rc}"
+}
 
 
 function setup_libpq() {
@@ -17,6 +72,7 @@ function setup_libpq() {
     rc \
     pkg \
     app \
+    system \
     version
   app="${1:-"psql"}"
   pkg="${2:-"libpq"}"
@@ -25,10 +81,28 @@ function setup_libpq() {
     echo "${app} is already installed"
     return "${rc}"
   fi
-  brew install "${pkg}"
-  version="$( brew info "${pkg}" --json | jq -r '.[].versions.stable' )"
-  rm "/usr/local/bin/${app}"
-  ln -s "/usr/local/Cellar/${pkg}/${version}/bin/${app}" "/usr/local/bin/${app}"
+  system=$(uname -s)
+  echo "detected ${system}"
+  case "${system}" in
+    "Darwin")
+      install_brew "${pkg}" && rc=$? || rc=$?
+      if [[ "${rc}" -ne 0 ]]; then
+          echo "failed to install ${pkg}, exitting"
+          return "${rc}"
+      fi
+      version="$( brew info "${pkg}" --json | jq -r '.[].versions.stable' )"
+      rm "/usr/local/bin/${app}"
+      ln -s "/usr/local/Cellar/${pkg}/${version}/bin/${app}" "/usr/local/bin/${app}"
+    ;;
+    "Linux")
+      install_debian "${pkg}" && rc=$? || rc=$? 
+      if [[ "${rc}" -ne 0 ]]; then
+          echo "failed to install ${pkg}, exitting"
+          return "${rc}"
+      fi
+    ;;
+  esac
+  return "${rc}"
 }
 
 function setup_pg_server() {
@@ -53,4 +127,7 @@ function setup_pg_server() {
 }
 
 
-setup_libpq && setup_pg_server exit $? || exit $?
+validate_tools "docker" "jq" && \
+setup_libpq "${PG_CLIENT_APP}" "${PG_CLIENT_PKG}" && \
+setup_pg_server && \
+exit $? || exit $?
