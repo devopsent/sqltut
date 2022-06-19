@@ -12,6 +12,18 @@ PG_DAEMON_GID="${PG_DAEMON_GID:-70}"
 PG_DAEMON_UID="${PG_DAEMON_UID:-70}"
 PG_CLIENT_APP="${PG_CLIENT_APP:-"psql"}"
 PG_CLIENT_PKG="${PG_CLIENT_PKG:-"libpq"}"
+NEED_PG_SERVER="${NEED_PG_SERVER:-"0"}"
+
+function ensure_user() {
+  local \
+    username
+  username="${1:-"root"}"
+  if [[ $(whoami) != "${username}" ]]; then
+    echo "Current user is $(whoami). Expected: ${username}"
+    return 1
+  fi
+  return 0
+}
 
 function validate_tool() {
   local \
@@ -110,6 +122,10 @@ function setup_pg_server() {
     rc
   local -a \
     cmd
+  [[ "${NEED_PG_SERVER}" -ne 0 ]] || {
+    echo "skip setting up pg server: NEED_PG_SERVER=${NEED_PG_SERVER}";
+    exit 1;
+  }
   [[ -d "${PG_VOL_PATH}" ]] || mkdir -p "${PG_VOL_PATH}"
   cmd+=(docker run --rm \
     --name "${PG_IMAGE}-docker" \
@@ -127,7 +143,8 @@ function setup_pg_server() {
 }
 
 
-validate_tools "docker" "jq" && \
+ensure_user "root" || { echo "Failed validating user, Exitting"; exit 1; }
+validate_tools "docker" "jq" || { echo "Failed validating tools, Exitting"; exit 1; }
 setup_libpq "${PG_CLIENT_APP}" "${PG_CLIENT_PKG}" && \
 setup_pg_server && \
 exit $? || exit $?
